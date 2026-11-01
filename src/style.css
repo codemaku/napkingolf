@@ -637,6 +637,9 @@ input[type="range"]::-moz-range-thumb {
   font-size: 16px;
   margin: var(--s3) 0 var(--s1);
 }
+.card > .chk:first-child {
+  margin-top: 0;
+}
 .chk input {
   width: 22px;
   height: 22px;

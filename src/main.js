@@ -93,14 +93,6 @@ function roundOk(k, c) {
     (!r.start || r.start + r.n - 1 <= c.holes.length)
   );
 }
-// Course requests: set this to your own email, form or issue-tracker link.
-const COURSE_REQUEST_URL =
-  "mailto:YOUR-EMAIL@example.com?subject=" +
-  encodeURIComponent("Napkin Golf course request") +
-  "&body=" +
-  encodeURIComponent(
-    "Course name:\nCity / country:\nTees (name, rating, slope if known):\nHole yardages (if you have them):\n",
-  );
 const FREE = "Free Play";
 const CLUBS = [
   "Driver", "3 Wood", "5 Wood", "Hybrid",
@@ -109,6 +101,7 @@ const CLUBS = [
 ];
 const NA_KEY = "__na";
 const UC_KEY = "pgs:courses";
+const SETUP_KEY = "pgs:setup";
 const HELP =
   "Scales your distance to the hole, similar to playing from forward tees. The fairway width and green size remain standard to keep the challenge fair. Adjust in 5% increments (e.g., 20% to 25%) as your game improves.";
 
@@ -262,6 +255,7 @@ function startRound() {
   const players = cfg.players.map((p, i) => ({ i, factor: p.factor }));
   const names = cfg.players.map((p, i) => cfgName(i));
   histView = false;
+  saveSetup();
   G = {
     id: Date.now(),
     saved: false,
@@ -504,6 +498,23 @@ function savePlayers() {
   }));
   cfg.players = list;
 })();
+function saveSetup() {
+  LS.set(SETUP_KEY, {
+    course: cfg.course,
+    round: cfg.round,
+    start: cfg.start,
+    customDist: cfg.customDist,
+  });
+}
+(function loadSetup() {
+  const s = LS.get(SETUP_KEY);
+  if (!s || typeof s !== "object") return;
+  if (s.course === "custom" || getCourse(s.course)) cfg.course = s.course;
+  if (typeof s.round === "string" && ROUNDS[s.round]) cfg.round = s.round;
+  if (Number.isFinite(+s.start) && +s.start >= 1) cfg.start = Math.round(+s.start);
+  if (s.customDist != null && s.customDist !== "") cfg.customDist = s.customDist;
+  fitRound();
+})();
 function buzz(p) {
   try {
     if (navigator.vibrate) navigator.vibrate(p);
@@ -729,7 +740,6 @@ function vSetup() {
         <button data-act="newcourse">+ Build a course</button>
         ${c && c.user ? `<button data-act="editcourse">Edit</button><button class="warn-text" data-act="delask">Delete</button>` : ""}
       </div>
-      <div class="hint">Course not listed? <a href="${esc(COURSE_REQUEST_URL)}" target="_blank" rel="noopener">Request it</a></div>
     </div>
     ${
 custom
@@ -1186,14 +1196,17 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.remove(), 2600);
 }
 function clearAll() {
-  ["pgs:save", HIST_KEY, DETAILS_KEY, UC_KEY, PLAYERS_KEY].forEach((k) =>
-    LS.del(k),
+  ["pgs:save", HIST_KEY, DETAILS_KEY, UC_KEY, PLAYERS_KEY, SETUP_KEY].forEach(
+    (k) => LS.del(k),
   );
   cfg.players = [{ name: "", factor: 1.0 }];
+  cfg.course = "samarahan";
+  cfg.round = "full18";
+  cfg.start = 1;
+  cfg.customDist = 127;
+  cfg.err = "";
   UC = {};
   resume = null;
-  if (cfg.course !== "custom" && !getCourse(cfg.course))
-    cfg.course = "samarahan";
   fitRound();
 }
 
@@ -1207,6 +1220,7 @@ function openBuilder(id) {
     rating: c && c.courseRating ? String(c.courseRating) : "",
     slope: c && c.slopeRating ? String(c.slopeRating) : "",
     dists: c ? c.holes.map((h) => String(h.dist)) : Array(18).fill(""),
+    submit: false,
     err: "",
   };
   screen = "builder";
@@ -1242,6 +1256,10 @@ function vBuilder() {
     <h2 class="h3">Hole yardages</h2>
     <div class="hgrid">${grid}</div>
   </div>
+  <div class="card">
+    <label class="chk"><input type="checkbox" id="bsubmit" ${B.submit ? "checked" : ""}> Suggest this course for the official list</label>
+    <div class="hint">Opens an email with the yardages so it can be shortlisted. The course is still saved on this device either way.</div>
+  </div>
   ${B.err ? `<div class="msg bad" role="alert">${esc(B.err)}</div>` : ""}
   <div class="stack"><button class="primary" data-act="bsave">Save course</button><button data-act="bcancel">Cancel</button></div>`;
 }
@@ -1276,11 +1294,34 @@ function saveBuilder() {
     B.err = "Couldn’t save. Browser storage may be full or blocked.";
     return render();
   }
+  const offer = B.submit;
   cfg.course = id;
   B = null;
   fitRound();
+  saveSetup();
   screen = "setup";
   render(true);
+  if (offer) offerCourse(course);
+}
+function offerCourse(course) {
+  const holes = course.holes
+    .map((h) => `${h.num}. ${h.dist}`)
+    .join("\n");
+  const body =
+    "I'd like this course considered for the official Napkin Golf list.\n\n" +
+    `Course name: ${course.name}\n` +
+    `Tees: ${course.teeName}\n` +
+    `Total yardage: ${course.totalYardage}\n` +
+    `Rating: ${course.courseRating || ""}\n` +
+    `Slope: ${course.slopeRating || ""}\n\n` +
+    `Hole yardages:\n${holes}\n`;
+  const url =
+    "mailto:codemaku@gmail.com?subject=" +
+    encodeURIComponent("Napkin Golf course shortlist: " + course.name) +
+    "&body=" +
+    encodeURIComponent(body);
+  window.location.href = url;
+  toast("Course saved. An email draft opened with the course details.");
 }
 
 // ---------- shot dispersion map ----------
@@ -1671,6 +1712,7 @@ document.addEventListener("click", (e) => {
     LS.set(UC_KEY, UC);
     cfg.course = "samarahan";
     fitRound();
+    saveSetup();
     dlg = null;
     render();
   } else if (a === "clearask") {
@@ -1746,6 +1788,9 @@ document.addEventListener("input", (e) => {
   } else if (id === "cdist") {
     cfg.customDist = t.value;
     cfg.err = "";
+    saveSetup();
+  } else if (id === "bsubmit") {
+    B.submit = t.checked;
   } else if (id === "hsd") {
     G.hsd = +t.value;
     $("#hsPrev").textContent = holePrev(G.hsd);
@@ -1768,13 +1813,16 @@ document.addEventListener("change", (e) => {
     cfg.course = v;
     cfg.err = "";
     fitRound();
+    saveSetup();
     render();
   } else if (id === "round") {
     cfg.round = v;
     if (ROUNDS[v].start) cfg.start = ROUNDS[v].start;
+    saveSetup();
     render();
   } else if (id === "start") {
     cfg.start = +v;
+    saveSetup();
     render();
   } else if (id === "shotNum") t.value = fmt1(T.shot);
   else if (id === "varNum") t.value = fmt1(Math.abs(T.vari));
